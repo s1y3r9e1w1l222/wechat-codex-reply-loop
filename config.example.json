@@ -1,0 +1,14 @@
+{
+  "mode": "preview",
+  "provider": "codex",
+  "allowed": [],
+  "state_dir": ".state/run",
+  "calibration_path": ".state/run/calibration.json",
+  "persona_path": "persona.example.txt",
+  "poll_seconds": 2,
+  "quiet_seconds": 2,
+  "max_wait_seconds": 8,
+  "ai_workers": 2,
+  "request_timeout": 90,
+  "max_scan_pages": 3
+}

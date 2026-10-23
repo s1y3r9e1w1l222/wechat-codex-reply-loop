@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wechat-codex-reply-loop"
+version = "0.1.0"
+description = "Mac 上复用 Codex 与 iPhone Use 的微信循环回复服务"
+readme = "README.md"
+license = {file = "LICENSE"}
+requires-python = ">=3.9"
+dependencies = []
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Operating System :: MacOS",
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+]
+
+[project.scripts]
+wechat-reply = "wechat_autoreply.cli:main"
+
+[project.urls]
+Repository = "https://github.com/s1y3r9e1w1l222/wechat-codex-reply-loop"
+Issues = "https://github.com/s1y3r9e1w1l222/wechat-codex-reply-loop/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
