@@ -16,6 +16,7 @@ class Calibration:
     identities: dict = field(default_factory=dict)
     profile_signatures: dict = field(default_factory=dict)
     identity_probes: dict = field(default_factory=dict)
+    group_keys: list = field(default_factory=list)
     bundle_id: str = 'com.tencent.xin'
     viewport: tuple = (440, 956)
     verified: bool = False
@@ -32,6 +33,19 @@ def rect(n):
     return tuple(r)
 
 
+def is_list_title(title):
+    return bool(re.fullmatch(r'微信(?:\(\d+\))?', title))
+
+
+def matches_chat_title(title, cal, key):
+    labels = [label for label, value in cal.identities.items() if value == key]
+    if len(labels) != 1:
+        return False
+    if key in cal.group_keys:
+        return bool(re.fullmatch(re.escape(labels[0]) + r',?\([1-9]\d*\)', title))
+    return title == labels[0] and not re.search(r'[,，]?\(?\d+\)$', title)
+
+
 def _check(view, cal):
     if view.get('app') != cal.bundle_id:
         raise ValueError('当前前台不是已校准的微信')
@@ -45,7 +59,7 @@ def _check(view, cal):
 def parse_list(view, cal):
     _check(view, cal)
     nodes = view.get('nodes', [])
-    if not any(n.get('type') == 'NavigationBar' and re.fullmatch(r'微信(?:\(\d+\))?', text(n)) for n in nodes):
+    if not any(n.get('type') == 'NavigationBar' and is_list_title(text(n)) for n in nodes):
         raise ValueError('当前页面不是消息列表')
     if not 100 < cal.list_bottom <= cal.viewport[1]:
         raise ValueError('尚未校准消息列表底部')
@@ -72,30 +86,44 @@ def parse_list(view, cal):
     return result
 
 
-def parse_chat(view, cal, key, muted=None, identity_signature=None):
+def parse_chat(view, cal, key, muted=None, identity_signature=None, *, list_verified=False):
     _check(view, cal)
     nodes = view.get('nodes', [])
     navs = [text(n) for n in nodes if n.get('type') == 'NavigationBar']
-    if len(navs) != 1 or navs[0].startswith('微信'):
+    if len(navs) != 1 or is_list_title(navs[0]):
         raise ValueError('聊天页标题无法识别')
     title = navs[0]
     expected = next((label for label, value in cal.identities.items() if value == key), '')
-    identity = title == expected and not re.search(r'[,，]?\(?\d+\)$', title)
+    identity = matches_chat_title(title, cal, key)
     if key in cal.profile_signatures:
-        identity = identity and identity_signature == cal.profile_signatures[key]
+        identity = identity and (list_verified or identity_signature == cal.profile_signatures[key])
+    group = key in cal.group_keys
     messages, anchor = [], ''
     for n in sorted(nodes, key=lambda n: rect(n)[1]):
         label = text(n)
         if n.get('type') == 'Button' and re.fullmatch(r'\d{1,2}:\d{2}|(?:昨天|星期.).*', label):
             anchor = label
-        if n.get('type') != 'Other' or not re.match(r'^(?:我|' + re.escape(expected) + r'),', label):
+        if n.get('type') != 'Other':
+            continue
+        if group:
+            # Message rows span the chat width; scrollbars and other controls do not.
+            x, _, w, h = rect(n)
+            if x != 0 or w < cal.viewport[0] * .8 or h <= 0 or ',' not in label:
+                continue
+        elif not re.match(r'^(?:我|' + re.escape(expected) + r'),', label):
             continue
         who, _, body = label.partition(',')
+        if not who or not body:
+            continue
         kind = 'text'
         for marker, kind_name in [('图片,', 'image'), ('语音,', 'voice'), ('视频,', 'video'), ('文件,', 'file'), ('链接,', 'link')]:
-            if body.startswith(marker):
+            # A comma in a group nickname makes its boundary ambiguous. A media
+            # marker later in the label must not silently turn an image into text.
+            if body.startswith(marker) or (group and who != '我' and ',' + marker in body):
                 kind = kind_name
                 break
+        if group and who != '我':
+            body = who + '：' + body
         messages.append(Message('outgoing' if who == '我' else 'incoming', body, kind, anchor))
     inputs = [n for n in nodes if n.get('type') in ('TextView', 'TextField')]
     if len(inputs) > 1:

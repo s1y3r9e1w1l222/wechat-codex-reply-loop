@@ -37,6 +37,7 @@ class ChatSnapshot:
     identity_verified: bool = False
     title: str = ''
     send_failed: bool = False
+    initial_unread: Optional[Tuple[Message, ...]] = None
 
 
 @dataclass(frozen=True)

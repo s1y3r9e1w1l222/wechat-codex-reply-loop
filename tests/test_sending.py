@@ -122,6 +122,18 @@ class SendingTests(unittest.TestCase):
         previous = [Message('incoming', '你好'), Message('outgoing', '收到')]
         self.assertFalse(Sender._sent_evidence(previous, snapshot(previous), '收到'))
 
+    def test_pending_indicator_is_read_again_without_submitting_twice(self):
+        pending = snapshot(self.context + [Message('outgoing', '收到,正在发送')])
+        sent = snapshot(self.context + [Message('outgoing', '收到')])
+        sender, session = self.sender([snapshot(), snapshot(draft='收到'), pending, sent])
+        self.assertEqual(sender.send(self.job, threading.Event()).status, 'sent')
+        self.assertEqual(session.sends, 1)
+        self.assertEqual(self.store.job(self.job['id'])['status'], 'sent')
+
+    def test_matching_outgoing_with_nonempty_composer_is_not_confirmed(self):
+        after = snapshot(self.context + [Message('outgoing', '收到')], draft='手工草稿')
+        self.assertFalse(Sender._sent_evidence(self.context, after, '收到'))
+
     def test_explicit_failure_bubble_stays_uncertain(self):
         from wechat_autoreply.wechat import parse_chat, Calibration
         from test_wechat import node, obs

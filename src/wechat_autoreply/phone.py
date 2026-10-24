@@ -88,6 +88,9 @@ class PhoneBridge:
             self.compact = importlib.import_module('wda_controller').compact_node
             runtime = module.Runtime()
         self.runtime = runtime
+        # Large WeChat lists exceeded the upstream 15-second HTTP budget on the
+        # tested device. This applies to this bridge only, not plugin settings.
+        self.runtime.client.timeout = max(45, getattr(self.runtime.client, 'timeout', 15))
 
     @staticmethod
     def _invoke(method, name, args):

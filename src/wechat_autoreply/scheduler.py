@@ -16,24 +16,30 @@ def align_messages(previous, current):
 
 
 class Scheduler:
-    def __init__(self, store, allowed):
+    def __init__(self, store, allowed=None, *, scope=None, campaigns=None):
         self.store = store
-        self.allowed = set(allowed)
+        self.allowed = set(allowed or ())
+        self.scope, self.campaigns = scope, campaigns
+
+    def allows(self, key):
+        return self.scope.allows(key) if self.scope else key in self.allowed
 
     def enqueue_scan(self, candidates):
         # A later list observation can revoke a queued reply before AI or send.
-        revoked = {c.key for c in candidates if c.key in self.allowed and c.muted is not False}
+        revoked = {c.key for c in candidates if self.allows(c.key) and c.muted is not False}
         with self.store.transaction():
             for c in candidates:
-                if c.key in self.allowed and not c.unread and self.store.conversation(c.key):
+                if self.allows(c.key) and not c.unread and self.store.conversation(c.key):
                     self.store.update_conversation(c.key, preview='')
             for job in self.store.active_jobs():
                 if job['conversation'] in revoked:
                     self.store.update_job(job['id'], status='skipped', draft=None,
                                           reason='muted_or_unknown')
         eligible = [c for c in candidates if c.unread and c.muted is False and
-                    c.identity_verified and c.key in self.allowed]
+                    (c.identity_verified or (self.scope and self.scope.config.app_id!='wechat')) and self.allows(c.key)]
         for c in sorted(eligible, key=lambda c: c.position, reverse=True):
+            if self.campaigns:
+                self.campaigns.observe_incoming(c.key)
             self.store.ensure_conversation(c.key, c.label)
             conv = self.store.conversation(c.key)
             marker = c.preview + '\x1f' + str(c.unread_count)
@@ -53,9 +59,9 @@ class Scheduler:
                 if job['conversation'] == key:
                     self.store.update_job(job['id'], status=status, reason=reason)
 
-    def observe_chat(self, snapshot):
+    def observe_chat(self, snapshot, *, own_send=False):
         key = snapshot.key
-        if key not in self.allowed:
+        if not self.allows(key):
             return None
         self.store.ensure_conversation(key)
         if snapshot.muted is not False:
@@ -76,10 +82,20 @@ class Scheduler:
                 if m.direction != 'incoming':
                     break
                 tail.append(m)
-            if not count or count > len(tail):
-                self.block(key, 'unread_boundary_unknown')
-                return None
-            appended = tuple(reversed(tail[:count]))
+            if own_send:
+                appended = tuple(snapshot.messages)
+            elif snapshot.initial_unread is not None:
+                boundary = snapshot.initial_unread
+                if (not boundary or any(m.direction!='incoming' for m in boundary) or
+                        [m.token() for m in snapshot.messages[-len(boundary):]] != [m.token() for m in boundary]):
+                    self.block(key,'unread_boundary_unknown')
+                    return None
+                appended = boundary
+            else:
+                if not count or count > len(tail):
+                    self.block(key, 'unread_boundary_unknown')
+                    return None
+                appended = tuple(reversed(tail[:count]))
         else:
             aligned = align_messages(previous, snapshot.messages)
             if aligned.ambiguous:
@@ -87,6 +103,13 @@ class Scheduler:
                 return None
             appended = aligned.appended
         new = [m for m in appended if m.direction == 'incoming']
+        if self.campaigns:
+            if new:
+                self.campaigns.observe_incoming(key)
+            elif not own_send and any(m.direction=='outgoing' for m in appended):
+                self.campaigns.observe_manual_outgoing(key)
+            if active and active.get('kind') != 'reply':
+                active = None
         if any(m.kind != 'text' for m in new):
             self.block(key, 'nontext_input')
             return None

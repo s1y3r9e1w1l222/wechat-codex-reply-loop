@@ -27,6 +27,13 @@ class FakeRuntime:
 
 
 class PhoneTests(unittest.TestCase):
+    def test_large_list_http_budget_is_local_to_the_project_bridge(self):
+        with tempfile.TemporaryDirectory() as d:
+            runtime = FakeRuntime(d)
+            runtime.client.timeout = 15
+            bridge = PhoneBridge(runtime=runtime)
+            self.assertEqual(bridge.runtime.client.timeout, 45)
+            self.assertEqual(runtime.calls, [])
     def test_critical_transaction_excludes_other_process_and_checks_cancel(self):
         with tempfile.TemporaryDirectory() as d:
             runtime = FakeRuntime(d)

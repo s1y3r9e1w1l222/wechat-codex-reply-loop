@@ -6,6 +6,27 @@ from wechat_autoreply.config import load_config
 
 
 class ConfigTests(unittest.TestCase):
+    def test_soul_uses_non_wechat_daily_scope(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / 'config.json'
+            p.write_text('{"app_id":"soul"}')
+            self.assertEqual(load_config(p).app_id, 'soul')
+            p.write_text('{"app_id":"soul","allowed":["a"]}')
+            with self.assertRaisesRegex(ValueError, 'non_wechat_uses_daily_scope'):
+                load_config(p)
+
+    def test_app_selection_preserves_wechat_default_and_rejects_conflicting_scope(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / 'config.json'
+            p.write_text('{}')
+            self.assertEqual(load_config(p).app_id, 'wechat')
+            p.write_text('{"app_id":"jimu"}')
+            self.assertEqual(load_config(p).app_id, 'jimu')
+            for content in ['{"app_id":"unknown"}', '{"app_id":"jimu","allowed":["a"]}']:
+                p.write_text(content)
+                with self.assertRaises(ValueError):
+                    load_config(p)
+
     def test_defaults_are_preview_and_empty_allowlist(self):
         with tempfile.TemporaryDirectory() as d:
             p = Path(d) / 'config.json'

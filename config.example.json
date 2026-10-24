@@ -1,4 +1,5 @@
 {
+  "app_id": "wechat",
   "mode": "preview",
   "provider": "codex",
   "allowed": [],

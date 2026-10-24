@@ -34,8 +34,20 @@ class NavigationTests(unittest.TestCase):
                         'rows':[ConversationCandidate(k,k,float(i),True,False,k,True,k,1)
                                 for i,k in enumerate(keys)]}
         device = Pages()
-        bridge = SimpleNamespace(transaction=lambda cb,cancel=None:cb(device))
+        bridge = SimpleNamespace(transaction=lambda cb,cancel=None,**kw:cb(device))
         return WechatDriver(bridge,Calibration(list_bottom=868),max_pages=2)
+
+    def test_multi_page_scan_budget_does_not_use_short_single_action_timeout(self):
+        budgets = []
+        driver = self.scan_driver()
+        original = driver.bridge.transaction
+        def transaction(callback, cancel=None, **kwargs):
+            budgets.append(kwargs.get('timeout', 90))
+            return original(callback, cancel)
+        driver.bridge.transaction = transaction
+        with patch('wechat_autoreply.navigation.parse_list', side_effect=lambda view, cal: view['rows']):
+            driver.scan()
+        self.assertGreaterEqual(budgets[0], 240)
 
     def test_stable_two_page_scan_preserves_order(self):
         driver = self.scan_driver()
@@ -43,6 +55,16 @@ class NavigationTests(unittest.TestCase):
             rows = driver.scan()
         self.assertEqual([r.key for r in rows],['a','c','b','d','e'])
         self.assertEqual(driver.coverage.get('stable_passes'),2)
+
+    def test_same_identity_seen_on_separate_pages_is_not_verified(self):
+        from dataclasses import replace
+        driver = self.scan_driver()
+        def rows(view, cal):
+            return [replace(row, key='a', label='a', preview='a') if row.key == 'e' else row
+                    for row in view['rows']]
+        with patch('wechat_autoreply.navigation.parse_list', side_effect=rows):
+            observed = driver.scan()
+        self.assertEqual([r.identity_verified for r in observed if r.key == 'a'], [False, False])
 
     def test_page_reordering_with_valid_overlap_is_discarded(self):
         driver = self.scan_driver(reordered=True)
@@ -57,7 +79,8 @@ class NavigationTests(unittest.TestCase):
             {'type':'Button','label':'发送','name':'Send','rect':[330,830,110,56]}]}
         session = WechatSession(SimpleNamespace(), device)
         session.submit()
-        self.assertEqual(device.calls[0][1], {'x':385.0,'y':858.0,'observe':'tree'})
+        self.assertEqual(device.calls[0][1], {'selector': {'type':'Button','label':'发送','name':'Send'},
+                                            'observe':'tree'})
 
     def test_input_continuation_does_not_replay_text(self):
         device = Device([{'input_complete': False, 'continue_token': 'token'},

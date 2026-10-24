@@ -1,5 +1,6 @@
 """Same-user, bounded local control. No phone calls run on this thread."""
 import fcntl
+import hashlib
 import json
 import os
 import socket
@@ -10,6 +11,17 @@ from pathlib import Path
 from .store import private_dir
 
 MAX_REQUEST = 4096
+
+
+def control_path(root):
+    path = root / 'control.sock'
+    if len(os.fsencode(path)) < 100:
+        return path
+    # macOS Unix sockets have a short path limit. Keep chat data in its chosen
+    # directory and place only this endpoint in a same-user private short path.
+    directory = private_dir(Path('/tmp') / ('wcrl-' + str(os.getuid())))
+    digest = hashlib.sha256(os.fsencode(root)).hexdigest()[:32]
+    return directory / (digest + '.sock')
 
 
 class InstanceLease:
@@ -31,11 +43,10 @@ class InstanceLease:
 class ControlServer:
     def __init__(self, root, handler):
         self.root, self.handler = private_dir(root), handler
-        self.path = self.root / 'control.sock'
-        if len(os.fsencode(self.path)) >= 100:
-            raise ValueError('状态目录路径过长，请使用较短的私有目录')
+        self.path = control_path(self.root)
         self.closed = threading.Event()
         self.sock, self.thread = None, None
+        self.bound = False
 
     def start(self):
         if self.path.exists():
@@ -53,6 +64,7 @@ class ControlServer:
                 probe.close()
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.sock.bind(str(self.path))
+        self.bound = True
         os.chmod(self.path, 0o600)
         self.sock.listen(4)
         self.sock.settimeout(.2)
@@ -95,8 +107,9 @@ class ControlServer:
             self.sock.close()
         if self.thread:
             self.thread.join(timeout=1)
-        if self.path.exists() and stat.S_ISSOCK(self.path.lstat().st_mode):
+        if self.bound and self.path.exists() and stat.S_ISSOCK(self.path.lstat().st_mode):
             self.path.unlink()
+        self.bound = False
 
 
 def send_command(root, request):
@@ -106,7 +119,7 @@ def send_command(root, request):
         raise ValueError('控制请求过大')
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
         client.settimeout(5)
-        client.connect(str(root / 'control.sock'))
+        client.connect(str(control_path(root)))
         client.sendall(data)
         response = bytearray()
         while b'\n' not in response and len(response) <= 1024 * 1024:

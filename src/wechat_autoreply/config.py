@@ -5,6 +5,7 @@ from pathlib import Path
 
 @dataclass
 class Config:
+    app_id: str = 'wechat'
     mode: str = 'preview'
     allowed: list = field(default_factory=list)
     plugin_path: str = ''
@@ -37,12 +38,16 @@ def load_config(path):
     if unknown:
         raise ValueError('配置存在未知字段')
     c = Config(**data)
+    if c.app_id not in ('wechat', 'qingteng', 'jimu', 'soul'):
+        raise ValueError('unknown_app')
     if c.mode != 'preview':
         raise ValueError('配置中的默认模式必须为 preview；自动发送需本次启动显式启用')
     if (not isinstance(c.allowed, list) or len(c.allowed) > 100 or
             any(not isinstance(x, str) or not x or len(x) > 200 for x in c.allowed)
             or len(set(c.allowed)) != len(c.allowed)):
         raise ValueError('联系人名单格式不正确或重复')
+    if c.app_id != 'wechat' and c.allowed:
+        raise ValueError('non_wechat_uses_daily_scope')
     numeric = dict(poll_seconds=(0.5, 60), quiet_seconds=(0, 10),
                    max_wait_seconds=(1, 60), ai_workers=(1, 2),
                    request_timeout=(1, 120), max_messages=(1, 20),
